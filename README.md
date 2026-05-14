@@ -1,8 +1,8 @@
 # MewFurnitureFramework
 
-**MewFurnitureFramework** is a runtime furniture-modding framework that lets modders add new furniture data without replacing the game's original `furniture_info.data` file.
-
 A DLL mod for Mewgenics that acts as a framework for the creation and loading of new custom furniture mods!
+
+This allows modders to add new furniture data without replacing the game's original `furniture_info.data` file.
 
 Instead of asking every mod to ship a full edited copy of `furniture_info.data`, the framework scans installed framework mods for small additive furniture data files, merges the new rows into the loaded furniture database in memory, and leaves the base game file untouched!
 
@@ -11,7 +11,7 @@ It also includes an improved in-game furniture editor, making it easier to build
 ## Features
 
 - **Additive furniture loading**  
-  Ship only your new furniture data instead of a full replacement `furniture_info.data`.
+  Ship only your new relevant furniture data instead of a full replacement `furniture_info.data`.
 
 - **Runtime merge**  
   The framework patches the loaded furniture data in memory when the game loads `furniture_info.data`.
@@ -25,8 +25,8 @@ It also includes an improved in-game furniture editor, making it easier to build
 - **In-editor capture workflow**  
   Capture the currently selected furniture from the furniture editor directly into an append file.
 
-- **Customizable debug overlay**  
-  The helper overlay can be shown, hidden, and customized through a text file.
+- **Improved furniture debug overlay**  
+  The debug overlay for the game's furniture editor now includes various helpful logs, improved explanations, auto-shows upon furniture editor entry, and has formatting/text improvements as well.
 
 - **Vanilla name dumping**  
   Dump the game's loaded vanilla furniture names to a text file for reference and duplicate protection.
