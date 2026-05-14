@@ -92,7 +92,7 @@ A basic furniture mod setup process looks like this:
 1. Create a new mod folder for your furniture mod.
 2. Create a `data` folder inside that mod folder.
 3. Add or copy your `furniture_info.data.append` file (generated with the improved in-game furniture editor) into the `data` folder.
-4. Make sure to include the standalone `MewFurnitureUninstaller.exe` in the root of the furniture mod folder before release.
+4. Make sure to include the standalone `MewFurnitureUninstaller.exe` in the root of the furniture mod folder before release. You can find the uninstaller attached to this repository's releases, or in the root folder of the example furniture mod.
 5. Make sure you have both `MewFurnitureFramework` and your furniture mod through your normal Mewjector/Mewtator setup.
 6. Launch the game and confirm that the framework loads your append file.
 
@@ -112,7 +112,7 @@ MyFurnitureMod/data/furniture_info.data.append
 
 Furniture mods can affect save files! If a save contains furniture from a mod, removing that mod through just your modloader or through deleting the folder will leave the save referencing furniture data that no longer exists!
 
-To solve this problem, each furniture mod should come packaged with its own standalone `MewFurnitureUninstaller.exe`. Use the uninstaller found in the root directory of the specific furniture mod you want to remove after normal mod folder deletion or mod-loader disable. It will uninstall that mod's furniture from your saves so you can keep playing those saves without that furniture mod installed!
+To solve this problem, each furniture mod should come packaged with its own standalone `MewFurnitureUninstaller.exe`. You can find the uninstaller attached to this repository's releases, or in the root folder of the example furniture mod. Use the uninstaller found in the root directory of the specific furniture mod you want to remove after normal mod folder deletion or mod-loader disable. It will uninstall that mod's furniture from your saves so you can keep playing those saves without that furniture mod installed!
 
 ## Using the in-game furniture editor
 
