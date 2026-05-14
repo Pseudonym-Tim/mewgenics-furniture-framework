@@ -71,7 +71,7 @@ Before using the furniture editor capture tools, create a separate mod folder fo
 
 For a complete working example, see the example furniture mod repository:
 
-[Example Furniture Mod](https://github.com/mute2673/MewFurnitureExampleMod)
+[Example Furniture Mod](https://github.com/Pseudonym-Tim/mewgenics-super-meat-boy-arcade-machine-furniture)
 
 Your furniture mod should use this layout:
 
