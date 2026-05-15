@@ -7,7 +7,7 @@ This allows modders to add new furniture data without replacing the game's origi
 
 Instead of asking every mod to ship a full edited copy of `furniture_info.data`, the framework scans installed framework mods for small additive furniture data files, merges the new rows into the loaded furniture database in memory, and leaves the base game file untouched!
 
-It also includes an improved in-game furniture editor, making it easier to build, test, and package new furniture for release.
+It also includes an improved in-game furniture editor, making it easier to build, test, and package new furniture for release. The framework additionally includes Jack's shop testing tools, letting modders force new modded furniture into the shop to confirm it appears, can be bought, and uses the expected price.
 
 ## Features
 
@@ -31,6 +31,9 @@ It also includes an improved in-game furniture editor, making it easier to build
 
 - **Vanilla name dumping**  
   Dump the game's loaded vanilla furniture names to a text file for reference and duplicate protection.
+
+- **Jack shop furniture testing**  
+  Force a configured furniture item into Jack's shop or reroll Jack's visible shop furniture so modders can quickly confirm that their furniture can appear, be bought, and has the expected price.
 
 ## How it works
 
@@ -65,6 +68,11 @@ The framework can find and load furniture append files for each furniture mod in
 4. Launch the game.
 
 When the game loads `furniture_info.data`, the framework merges any valid append files it finds.
+
+### Furniture pool behavior
+
+Once the framework merges a modded furniture row, the game treats that row as part of the loaded furniture database. This means modded furniture is automatically eligible for Jack's shop furniture pool, not only that, but
+modded furniture may also be available through other furniture pools or furniture-selection systems. 
 
 ## Setting up a furniture mod
 
@@ -149,6 +157,34 @@ MewFurnitureFramework/output/furniture_info.data.append
 ```
 
 Use `Ctrl + F8` when building a multi-furniture mod pack for multiple custom furniture items. Use `Ctrl + Shift + F8` when you just want a clean one-furniture append file for the currently selected furniture item.
+
+## Testing your furniture in Jack's shop
+
+MewFurnitureFramework includes a small Jack shop test helper, so modders can quickly confirm that their furniture can appear in the shop, be bought, and display the expected cost. 
+
+Configure your test furniture in:
+
+```text
+MewFurnitureFramework/jack_shop_test.txt
+```
+
+The most important options are:
+
+```text
+@furniture=YourFurnitureInternalName
+@slot=0
+@rare=0
+@refresh_before_replace=1
+```
+
+`@furniture` should match the internal furniture name from your append file. `@slot` chooses which visible Jack shop slot gets replaced, starting at `0`. `@rare` controls whether the item uses the normal or rare furniture pricing path. `@refresh_before_replace=1` rerolls Jack's shop before placing your configured test furniture into the chosen slot.
+
+Use these hotkeys while Jack's shop is open:
+
+| Hotkey | Action |
+| --- | --- |
+| `Ctrl + F10` | Reroll Jack's current shop furniture. |
+| `Ctrl + Shift + F10` | Reroll Jack's shop, then inject the configured test furniture into the configured slot. |
 
 ## Furniture editor improvements
 
