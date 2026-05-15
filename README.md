@@ -22,7 +22,7 @@ It also includes an improved in-game furniture editor, making it easier to build
   Furniture names already present in the base data, another loaded append file, or the optional vanilla name list are skipped instead of duplicated.
 
 - **Mod-folder scanning**  
-  The framework searches common mod and output folders for furniture append files.
+  The framework searches your mod folders for furniture append files.
 
 - **In-editor capture workflow**  
   Capture the currently selected furniture from the furniture editor directly into an append file.
