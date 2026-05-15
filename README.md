@@ -124,7 +124,9 @@ Furniture mods can affect save files! If a save contains furniture from a mod, r
 
 To solve this problem, each furniture mod should come packaged with its own standalone `MewFurnitureUninstaller.exe`. You can find the uninstaller attached to this repository's releases, or in the root folder of the example furniture mod. Use the uninstaller found in the root directory of the specific furniture mod you want to remove after normal mod folder deletion or mod-loader disable. It will uninstall that mod's furniture from your saves so you can keep playing those saves without that furniture mod installed!
 
-## Using the in-game furniture editor
+## Using the improved in-game furniture editor
+
+<img width="960" height="462" alt="eryy" src="https://github.com/user-attachments/assets/58458c96-7719-4d81-ac8e-199c47755fda" />
 
 For setup instructions, see [Setting up a furniture mod](#setting-up-a-furniture-mod).
 
