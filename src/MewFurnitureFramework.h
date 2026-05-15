@@ -38,6 +38,28 @@
 #define FURNITURE_DEBUG_RUNTIME_MESSAGE_TTL_MS 8000ULL
 #define FURNITURE_DEBUG_AUTO_SHOW_REENTRY_MS 5000ULL
 #define FURNITURE_DEBUG_PENDING_FORCE_VALID_MS 1000ULL
+#define RVA_SHOP_INIT 0x00789020U // Used to remember the Jack shop instance for test hotkeys...
+#define SHOP_INIT_STOLEN_BYTES 16 // Hook overwrite size at RVA_SHOP_INIT...
+#define RVA_SHOP_UPDATE 0x0078C0E0U // RVA of Shop::update, used to poll Jack shop test hotkeys while the shop is open...
+#define SHOP_UPDATE_STOLEN_BYTES 16 // Hook overwrite size at RVA_SHOP_UPDATE...
+#define RVA_SHOP_INIT_SHOP 0x0078A2A0U // RVA of Shop::initShop, kept resolved for compatibility/debugging but not used for live rerolls...
+#define RVA_SHOP_REFRESH_SHOP_ITEM 0x0078CB20U // RVA of Shop::refresh_shopitem, used to rebuild the visible button after a test replacement...
+#define RVA_FURNITURE_PRICE_LOOKUP 0x007AC9D0U // RVA of the furniture price helper used by vanilla shop item rolling...
+#define RVA_GLOBAL_FURNITURE_EFFECTS_PTR 0x013B4A10U // RVA of the global furniture-effects pointer passed to the price helper...
+#define SHOP_ITEMS_VECTOR_OFFSET 0x60U
+#define SHOP_ITEM_STRIDE_BYTES 0xC0U
+#define SHOP_ITEM_TYPE_OFFSET 0x00U
+#define SHOP_ITEM_BUTTON_INDEX_OFFSET 0x04U
+#define SHOP_ITEM_PRICE_OFFSET 0x08U
+#define SHOP_ITEM_NAME_OFFSET 0x10U
+#define SHOP_ITEM_RARE_OFFSET 0x30U
+#define SHOP_ITEM_TYPE_FURNITURE 0x0FU
+#define JACK_SHOP_TEST_CONFIG_FILE "jack_shop_test.txt"
+#define JACK_SHOP_DEFAULT_GUARANTEED_FURNITURE "IndieArcade2"
+#define JACK_SHOP_REFRESH_HOTKEY VK_F10
+#define JACK_SHOP_REFRESH_ALT_HOTKEY 0x30U // (Alias for keyboards/users that prefer number-row hotkeys)...
+#define JACK_SHOP_GUARANTEE_HOTKEY VK_F10
+#define JACK_SHOP_GUARANTEE_ALT_HOTKEY 0x30U // Ctrl+Shift+0 alias for the guaranteed test replacement...
 
 typedef struct MsvcString
 {
@@ -61,6 +83,11 @@ typedef struct PackedFileData
 
 typedef PackedFileData* (__fastcall *fn_packed_file_load)(void* context, MsvcString* path, uint8_t useCache, uint8_t allowFallback);
 typedef void (__fastcall *fn_furniture_editor_update)(void* editor);
+typedef void (__fastcall *fn_shop_init)(void* shop, MsvcString* shopName, void* shopItems, uint8_t houseShop);
+typedef void (__fastcall *fn_shop_update)(void* shop);
+typedef void (__fastcall *fn_shop_init_shop)(void* shop);
+typedef void (__fastcall *fn_shop_refresh_shop_item)(void* shop, void* shopItem, uint8_t animate);
+typedef int (__fastcall *fn_furniture_price_lookup)(void* furnitureEffects, MsvcString* furnitureName, uint8_t rare);
 typedef uint8_t* (__fastcall *fn_furniture_payload_lookup)(void* payloadMap, MsvcString* name);
 typedef void (__fastcall *fn_debug_text_add)(MsvcString* text);
 typedef void (__fastcall *fn_debug_text_add_pair)(void* context, MsvcString* label, MsvcString* value);

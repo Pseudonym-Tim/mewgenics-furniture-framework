@@ -10,6 +10,12 @@ static MewjectorAPI g_mj;
 static HMODULE g_moduleHandle = NULL;
 static fn_packed_file_load g_originalPackedFileLoad = NULL;
 static fn_furniture_editor_update g_originalFurnitureEditorUpdate = NULL;
+static fn_shop_init g_originalShopInit = NULL;
+static fn_shop_update g_originalShopUpdate = NULL;
+static fn_shop_init_shop g_shopInitShop = NULL;
+static fn_shop_refresh_shop_item g_shopRefreshShopItem = NULL;
+static fn_furniture_price_lookup g_furniturePriceLookup = NULL;
+static void** g_furnitureEffectsGlobal = NULL;
 static fn_furniture_payload_lookup g_furniturePayloadLookup = NULL;
 static fn_debug_text_add g_originalDebugTextAdd = NULL;
 static fn_debug_text_add_pair g_originalDebugTextAddPair = NULL;
@@ -22,8 +28,13 @@ static uint8_t g_lastAppendCaptureChordDown = 0U;
 static uint8_t g_lastOverwriteCaptureChordDown = 0U;
 static uint8_t g_lastVanillaDumpChordDown = 0U;
 static uint8_t g_lastDebugToggleChordDown = 0U;
+static uint8_t g_lastJackShopRefreshChordDown = 0U;
+static uint8_t g_lastJackShopGuaranteeChordDown = 0U;
 static uint8_t* g_vanillaFurnitureData = NULL;
 static uint32_t g_vanillaFurnitureDataSize = 0U;
+static uint8_t* g_currentFurnitureData = NULL;
+static uint32_t g_currentFurnitureDataSize = 0U;
+static uint32_t g_jackShopRandomState = 0U;
 static volatile LONG g_installed = 0;
 static volatile LONG g_patchStarted = 0;
 static volatile LONG g_patchFinished = 0;
@@ -32,6 +43,7 @@ static volatile LONG g_furnitureEditorInstructionsPrintedThisUpdate = 0;
 static volatile LONG g_pendingDebugOverlayForce = 0;
 static void* g_lastDebugConsole = NULL;
 static void* g_lastFurnitureEditor = NULL;
+static void* g_lastJackShop = NULL;
 static ULONGLONG g_lastFurnitureEditorUpdateTick = 0ULL;
 
 /*
@@ -102,6 +114,8 @@ typedef enum FurnitureDebugMessageId
     FURNITURE_DEBUG_MESSAGE_VANILLA_DUMP_MISSING,
     FURNITURE_DEBUG_MESSAGE_VANILLA_DUMP_INVALID,
     FURNITURE_DEBUG_MESSAGE_VANILLA_DUMP_WRITE_FAILED,
+    FURNITURE_DEBUG_MESSAGE_JACK_SHOP_REFRESHED,
+    FURNITURE_DEBUG_MESSAGE_JACK_SHOP_INJECTED,
     FURNITURE_DEBUG_MESSAGE_COUNT
 } FurnitureDebugMessageId;
 
@@ -142,12 +156,34 @@ typedef struct FurnitureRuntimeDebugMessage
     FurnitureDebugMessageId MessageId;
 } FurnitureRuntimeDebugMessage;
 
+typedef struct FurnitureDebugMessageContext
+{
+    const char* FurnitureName;
+    uint32_t RowCount;
+    const char* Path;
+    uint32_t NameCount;
+    int SlotIndex;
+    uint32_t ItemCount;
+    int Price;
+    int Rare;
+    uint32_t ReplacedCount;
+} FurnitureDebugMessageContext;
+
+typedef struct JackShopTestConfig
+{
+    char FurnitureName[MAX_FURNITURE_NAME_BYTES + 1U];
+    int SlotIndex;
+    int Rare;
+    int RefreshBeforeReplace;
+} JackShopTestConfig;
+
 static FurnitureDebugTextState g_furnitureDebugTextState;
 static FurnitureRuntimeDebugMessage g_runtimeDebugMessages[FURNITURE_DEBUG_RUNTIME_MESSAGE_CAPACITY];
 
 static const char* GetConfiguredFurnitureDebugTextValue(const char* value, size_t length, const char* fallback, size_t* outputLength);
 static const char* GetConfiguredFurnitureMessageTemplate(FurnitureDebugMessageId messageId, size_t* outputLength);
 static void QueueFurnitureDebugMessage(FurnitureDebugMessageId messageId, const char* furnitureName, uint32_t rowCount, const char* path, uint32_t nameCount);
+static void QueueFurnitureDebugMessageEx(FurnitureDebugMessageId messageId, const FurnitureDebugMessageContext* context);
 static int InitializeMsvcStringForDebugText(MsvcString* value, const char* text, size_t length);
 static void AddFurnitureDebugTextLine(const char* text, size_t length);
 static int IsFurnitureDebugTextWhitespace(char value);
@@ -888,7 +924,7 @@ static int ReadWholeFile(const char* path, FileBytes* output)
         return 0;
     }
 
-    data = (uint8_t*)HeapAlloc(GetProcessHeap(), 0, (size_t)fileSize.QuadPart);
+    data = (uint8_t*)HeapAlloc(GetProcessHeap(), 0, (size_t)fileSize.QuadPart + 1U);
 
     if (data == NULL)
     {
@@ -906,6 +942,7 @@ static int ReadWholeFile(const char* path, FileBytes* output)
     }
 
     CloseHandle(fileHandle);
+    data[bytesRead] = 0;
     output->Data = data;
     output->Size = (uint32_t)bytesRead;
     return 1;
@@ -947,6 +984,34 @@ static int StoreVanillaFurnitureDataSnapshot(const uint8_t* data, uint32_t size)
 
     g_vanillaFurnitureData = copiedData;
     g_vanillaFurnitureDataSize = size;
+    return 1;
+}
+
+static int StoreCurrentFurnitureDataSnapshot(const uint8_t* data, uint32_t size)
+{
+    uint8_t* copiedData;
+
+    if (data == NULL || size == 0U)
+    {
+        return 0;
+    }
+
+    copiedData = (uint8_t*)HeapAlloc(GetProcessHeap(), 0, size);
+
+    if (copiedData == NULL)
+    {
+        return 0;
+    }
+
+    memcpy(copiedData, data, size);
+
+    if (g_currentFurnitureData != NULL)
+    {
+        HeapFree(GetProcessHeap(), 0, g_currentFurnitureData);
+    }
+
+    g_currentFurnitureData = copiedData;
+    g_currentFurnitureDataSize = size;
     return 1;
 }
 
@@ -1016,27 +1081,6 @@ static int EnsureDirectoryExists(const char* path)
     }
 
     return 0;
-}
-
-static void ShowCaptureMessageBox(const char* title, const char* body, UINT icon)
-{
-    HWND ownerWindow;
-    UINT flags;
-
-    ownerWindow = GetForegroundWindow();
-    flags = MB_OK | icon | MB_SETFOREGROUND | MB_TOPMOST;
-
-    MessageBoxA(ownerWindow, body, title, flags);
-}
-
-static void ShowCaptureError(const char* body)
-{
-    if (body == NULL || body[0] == 0)
-    {
-        body = "Furniture capture failed!";
-    }
-
-    ShowCaptureMessageBox("MewFurnitureFramework", body, MB_ICONERROR);
 }
 
 static int GetFrameworkRootDirectory(char* output, size_t outputSize)
@@ -1874,6 +1918,8 @@ static const char* GetDefaultFurnitureDebugText(void)
         "@message_vanilla_dump_missing=Vanilla furniture name dump failed!\\nThe vanilla furniture_info.data has not been loaded yet.\r\n"
         "@message_vanilla_dump_invalid=Vanilla furniture name dump failed!\\nThe cached vanilla furniture data is invalid.\r\n"
         "@message_vanilla_dump_write_failed=Vanilla furniture name dump failed!\\nCould not write vanilla_furniture_names_dump.txt.\r\n"
+        "@message_jack_shop_refreshed=Jack shop refreshed!\\nVisible slots: {item_count}\\nFurniture slots rerolled: {replaced}\r\n"
+        "@message_jack_shop_injected=Jack shop test furniture injected!\\nFurniture: {furniture}\\nSlot: {slot} of {item_count}\\nCost: {price}\\nRare price path: {rare}\r\n"
         "\r\n"
         "Click / left-click\tDraws black tiles: solid/blocking furniture collision.\r\n"
         "Ctrl + Click\tDraws red tiles: support tiles, required to overlap with a surface tile. Ctrl has priority over the other draw modifiers.\r\n"
@@ -1888,7 +1934,9 @@ static const char* GetDefaultFurnitureDebugText(void)
         "F7\tToggle the furniture debug overlay.\r\n"
         "Ctrl + F8\tCapture/update the selected furniture row into the append file.\r\n"
         "Ctrl + Shift + F8\tOverwrite the append file with only the selected furniture row.\r\n"
-        "Ctrl + F9\tDump vanilla furniture names.\r\n";
+        "Ctrl + F9\tDump vanilla furniture names.\r\n"
+        "Ctrl + F10 / Ctrl + 0\tRefresh Jack's visible shop furniture while Jack's shop is open.\r\n"
+        "Ctrl + Shift + F10 / Ctrl + Shift + 0\tReplace a configured Jack shop slot with the furniture in jack_shop_test.txt.\r\n";
 }
 
 static int FileTimesEqual(const FILETIME* left, const FILETIME* right)
@@ -2191,6 +2239,18 @@ static int FurnitureDebugDirectiveMessageId(const char* key, FurnitureDebugMessa
     if (_stricmp(key, "message_vanilla_dump_write_failed") == 0)
     {
         *messageId = FURNITURE_DEBUG_MESSAGE_VANILLA_DUMP_WRITE_FAILED;
+        return 1;
+    }
+
+    if (_stricmp(key, "message_jack_shop_refreshed") == 0)
+    {
+        *messageId = FURNITURE_DEBUG_MESSAGE_JACK_SHOP_REFRESHED;
+        return 1;
+    }
+
+    if (_stricmp(key, "message_jack_shop_injected") == 0)
+    {
+        *messageId = FURNITURE_DEBUG_MESSAGE_JACK_SHOP_INJECTED;
         return 1;
     }
 
@@ -2616,6 +2676,14 @@ static const char* GetDefaultFurnitureMessageTemplate(FurnitureDebugMessageId me
         {
             return "Vanilla furniture name dump failed!\\nCould not write vanilla_furniture_names_dump.txt.";
         }
+        case FURNITURE_DEBUG_MESSAGE_JACK_SHOP_REFRESHED:
+        {
+            return "Jack shop refreshed!\\nVisible slots: {item_count}\\nFurniture slots rerolled: {replaced}";
+        }
+        case FURNITURE_DEBUG_MESSAGE_JACK_SHOP_INJECTED:
+        {
+            return "Jack shop test furniture injected!\\nFurniture: {furniture}\\nSlot: {slot} of {item_count}\\nCost: {price}\\nRare price path: {rare}";
+        }
         default:
         {
             return "";
@@ -2695,6 +2763,15 @@ static int BufferAppendU32Decimal(BufferBuilder* builder, uint32_t value)
     return BufferAppendCString(builder, buffer);
 }
 
+static int BufferAppendIntDecimal(BufferBuilder* builder, int value)
+{
+    char buffer[32];
+
+    _snprintf(buffer, sizeof(buffer), "%d", value);
+    buffer[sizeof(buffer) - 1U] = 0;
+    return BufferAppendCString(builder, buffer);
+}
+
 static int AppendFurnitureDebugEscapedTemplateChar(BufferBuilder* builder, char value)
 {
     if (value == 'n')
@@ -2725,26 +2802,66 @@ static int AppendFurnitureDebugEscapedTemplateChar(BufferBuilder* builder, char 
     return BufferAppendChar(builder, value);
 }
 
-static int AppendFurnitureDebugPlaceholderValue(BufferBuilder* builder, const char* name, size_t nameLength, const char* furnitureName, uint32_t rowCount, const char* path, uint32_t nameCount)
+static int AppendFurnitureDebugPlaceholderValue(BufferBuilder* builder, const char* name, size_t nameLength, const FurnitureDebugMessageContext* context)
 {
+    if (context == NULL)
+    {
+        return 0;
+    }
+
     if (nameLength == 9U && memcmp(name, "furniture", 9U) == 0)
     {
-        return BufferAppendCString(builder, furnitureName);
+        return BufferAppendCString(builder, context->FurnitureName);
     }
 
     if (nameLength == 4U && memcmp(name, "rows", 4U) == 0)
     {
-        return BufferAppendU32Decimal(builder, rowCount);
+        return BufferAppendU32Decimal(builder, context->RowCount);
     }
 
     if (nameLength == 4U && memcmp(name, "path", 4U) == 0)
     {
-        return BufferAppendCString(builder, path);
+        return BufferAppendCString(builder, context->Path);
     }
 
     if (nameLength == 5U && memcmp(name, "names", 5U) == 0)
     {
-        return BufferAppendU32Decimal(builder, nameCount);
+        return BufferAppendU32Decimal(builder, context->NameCount);
+    }
+
+    if (nameLength == 4U && memcmp(name, "slot", 4U) == 0)
+    {
+        return BufferAppendIntDecimal(builder, context->SlotIndex);
+    }
+
+    if (nameLength == 10U && memcmp(name, "item_count", 10U) == 0)
+    {
+        return BufferAppendU32Decimal(builder, context->ItemCount);
+    }
+
+    if (nameLength == 5U && memcmp(name, "slots", 5U) == 0)
+    {
+        return BufferAppendU32Decimal(builder, context->ItemCount);
+    }
+
+    if (nameLength == 5U && memcmp(name, "price", 5U) == 0)
+    {
+        return BufferAppendIntDecimal(builder, context->Price);
+    }
+
+    if (nameLength == 4U && memcmp(name, "cost", 4U) == 0)
+    {
+        return BufferAppendIntDecimal(builder, context->Price);
+    }
+
+    if (nameLength == 4U && memcmp(name, "rare", 4U) == 0)
+    {
+        return BufferAppendCString(builder, context->Rare ? "yes" : "no");
+    }
+
+    if (nameLength == 8U && memcmp(name, "replaced", 8U) == 0)
+    {
+        return BufferAppendU32Decimal(builder, context->ReplacedCount);
     }
 
     if (!BufferAppendChar(builder, '{'))
@@ -2760,7 +2877,7 @@ static int AppendFurnitureDebugPlaceholderValue(BufferBuilder* builder, const ch
     return BufferAppendChar(builder, '}');
 }
 
-static char* BuildFurnitureDebugMessageText(FurnitureDebugMessageId messageId, const char* furnitureName, uint32_t rowCount, const char* path, uint32_t nameCount)
+static char* BuildFurnitureDebugMessageTextEx(FurnitureDebugMessageId messageId, const FurnitureDebugMessageContext* context)
 {
     BufferBuilder output;
     const char* templateText;
@@ -2798,7 +2915,7 @@ static char* BuildFurnitureDebugMessageText(FurnitureDebugMessageId messageId, c
 
             if (index < templateLength && templateText[index] == '}')
             {
-                if (!AppendFurnitureDebugPlaceholderValue(&output, templateText + placeholderStart, index - placeholderStart, furnitureName, rowCount, path, nameCount))
+                if (!AppendFurnitureDebugPlaceholderValue(&output, templateText + placeholderStart, index - placeholderStart, context))
                 {
                     BufferFree(&output);
                     return NULL;
@@ -2880,13 +2997,18 @@ static void CompactRuntimeDebugMessages(void)
     }
 }
 
-static void QueueFurnitureDebugMessage(FurnitureDebugMessageId messageId, const char* furnitureName, uint32_t rowCount, const char* path, uint32_t nameCount)
+static void QueueFurnitureDebugMessageEx(FurnitureDebugMessageId messageId, const FurnitureDebugMessageContext* context)
 {
     char* messageText;
     uint32_t index;
 
+    if (context == NULL)
+    {
+        return;
+    }
+
     MaybeReloadFurnitureDebugTextFile();
-    messageText = BuildFurnitureDebugMessageText(messageId, furnitureName, rowCount, path, nameCount);
+    messageText = BuildFurnitureDebugMessageTextEx(messageId, context);
 
     if (messageText == NULL)
     {
@@ -2916,6 +3038,18 @@ static void QueueFurnitureDebugMessage(FurnitureDebugMessageId messageId, const 
     g_runtimeDebugMessages[FURNITURE_DEBUG_RUNTIME_MESSAGE_CAPACITY - 1U].Text = messageText;
     g_runtimeDebugMessages[FURNITURE_DEBUG_RUNTIME_MESSAGE_CAPACITY - 1U].ExpireTick = GetTickCount64() + FURNITURE_DEBUG_RUNTIME_MESSAGE_TTL_MS;
     g_runtimeDebugMessages[FURNITURE_DEBUG_RUNTIME_MESSAGE_CAPACITY - 1U].MessageId = messageId;
+}
+
+static void QueueFurnitureDebugMessage(FurnitureDebugMessageId messageId, const char* furnitureName, uint32_t rowCount, const char* path, uint32_t nameCount)
+{
+    FurnitureDebugMessageContext context;
+
+    memset(&context, 0, sizeof(context));
+    context.FurnitureName = furnitureName;
+    context.RowCount = rowCount;
+    context.Path = path;
+    context.NameCount = nameCount;
+    QueueFurnitureDebugMessageEx(messageId, &context);
 }
 
 static int HasRuntimeDebugMessages(void)
@@ -3056,6 +3190,769 @@ static void DestroyMsvcStringIfNeeded(MsvcString* value)
     if (g_msvcStringDestruct != NULL)
     {
         g_msvcStringDestruct(value);
+    }
+}
+
+
+static const char* GetDefaultJackShopTestConfigText(void)
+{
+    return
+        "# MewFurnitureFramework Jack shop test hotkeys\r\n"
+        "# Ctrl + F10 or Ctrl + 0 rerolls Jack's live shop slots in-place.\r\n"
+        "# Ctrl + Shift + F10 or Ctrl + Shift + 0 optionally rerolls Jack's live slots, then replaces one visible slot.\r\n"
+        "# slot is zero-based and maps to the live stock vector order. In Jack's six-slot layout, 0 is the first live item.\r\n"
+        "# rare=1 asks the vanilla furniture price helper for the rare furniture price path.\r\n"
+        "@furniture=" JACK_SHOP_DEFAULT_GUARANTEED_FURNITURE "\r\n"
+        "@slot=0\r\n"
+        "@rare=0\r\n"
+        "@refresh_before_replace=1\r\n";
+}
+
+static int GetJackShopTestConfigLoadPath(char* output, size_t outputSize)
+{
+    char dllDirectory[MAX_PATH_BUFFER];
+
+    if (output == NULL || outputSize == 0U)
+    {
+        return 0;
+    }
+
+    output[0] = 0;
+
+    if (!GetFrameworkRootDirectory(dllDirectory, sizeof(dllDirectory)))
+    {
+        return 0;
+    }
+
+    JoinPath(output, outputSize, dllDirectory, JACK_SHOP_TEST_CONFIG_FILE);
+    return output[0] != 0;
+}
+
+static void InitializeDefaultJackShopTestConfig(JackShopTestConfig* config)
+{
+    if (config == NULL)
+    {
+        return;
+    }
+
+    memset(config, 0, sizeof(JackShopTestConfig));
+    strncpy(config->FurnitureName, JACK_SHOP_DEFAULT_GUARANTEED_FURNITURE, sizeof(config->FurnitureName) - 1U);
+    config->SlotIndex = 0;
+    config->Rare = 0;
+    config->RefreshBeforeReplace = 1;
+}
+
+static void EnsureDefaultJackShopTestConfigFile(const char* path)
+{
+    const char* defaultText;
+    size_t defaultTextLength;
+
+    if (path == NULL || path[0] == 0 || FileExists(path))
+    {
+        return;
+    }
+
+    defaultText = GetDefaultJackShopTestConfigText();
+    defaultTextLength = strlen(defaultText);
+
+    if (!WriteWholeFileAtomic(path, (const uint8_t*)defaultText, (uint32_t)defaultTextLength))
+    {
+        LogMessage("Could not create default Jack shop test config: %s", path);
+    }
+}
+
+static void TrimJackShopConfigValue(char** text, size_t* length)
+{
+    char* value;
+    size_t valueLength;
+
+    if (text == NULL || length == NULL || *text == NULL)
+    {
+        return;
+    }
+
+    value = *text;
+    valueLength = *length;
+
+    while (valueLength > 0U && IsNameTextWhitespace(value[0]))
+    {
+        value++;
+        valueLength--;
+    }
+
+    while (valueLength > 0U && IsNameTextWhitespace(value[valueLength - 1U]))
+    {
+        value[valueLength - 1U] = 0;
+        valueLength--;
+    }
+
+    *text = value;
+    *length = valueLength;
+}
+
+static int ParseJackShopConfigBool(const char* text)
+{
+    if (text == NULL)
+    {
+        return 0;
+    }
+
+    if (_stricmp(text, "1") == 0 || _stricmp(text, "true") == 0 || _stricmp(text, "yes") == 0 || _stricmp(text, "on") == 0)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+static void ApplyJackShopConfigLine(JackShopTestConfig* config, char* line, size_t lineLength)
+{
+    char* key;
+    char* value;
+    char* equals;
+    size_t keyLength;
+    size_t valueLength;
+    long numberValue;
+
+    if (config == NULL || line == NULL || lineLength == 0U)
+    {
+        return;
+    }
+
+    TrimJackShopConfigValue(&line, &lineLength);
+
+    if (lineLength == 0U || line[0] == '#')
+    {
+        return;
+    }
+
+    if (line[0] == '@')
+    {
+        line++;
+        lineLength--;
+    }
+
+    equals = strchr(line, '=');
+
+    if (equals == NULL)
+    {
+        return;
+    }
+
+    *equals = 0;
+    key = line;
+    value = equals + 1;
+    keyLength = strlen(key);
+    valueLength = lineLength - (size_t)(value - line);
+    TrimJackShopConfigValue(&key, &keyLength);
+    TrimJackShopConfigValue(&value, &valueLength);
+
+    if (_stricmp(key, "furniture") == 0 || _stricmp(key, "furniture_name") == 0 || _stricmp(key, "name") == 0)
+    {
+        if (valueLength > 0U && valueLength <= MAX_FURNITURE_NAME_BYTES)
+        {
+            memcpy(config->FurnitureName, value, valueLength);
+            config->FurnitureName[valueLength] = 0;
+        }
+
+        return;
+    }
+
+    if (_stricmp(key, "slot") == 0 || _stricmp(key, "slot_index") == 0)
+    {
+        numberValue = strtol(value, NULL, 10);
+
+        if (numberValue < 0L)
+        {
+            numberValue = 0L;
+        }
+
+        if (numberValue > 64L)
+        {
+            numberValue = 64L;
+        }
+
+        config->SlotIndex = (int)numberValue;
+        return;
+    }
+
+    if (_stricmp(key, "rare") == 0 || _stricmp(key, "is_rare") == 0)
+    {
+        config->Rare = ParseJackShopConfigBool(value);
+        return;
+    }
+
+    if (_stricmp(key, "refresh_before_replace") == 0 || _stricmp(key, "refresh_first") == 0)
+    {
+        config->RefreshBeforeReplace = ParseJackShopConfigBool(value);
+        return;
+    }
+
+}
+
+static void ParseJackShopConfigBuffer(JackShopTestConfig* config, char* textBuffer, uint32_t textBufferSize)
+{
+    uint32_t lineStart;
+    uint32_t index;
+    uint32_t lineEnd;
+    char* line;
+    size_t lineLength;
+
+    if (config == NULL || textBuffer == NULL)
+    {
+        return;
+    }
+
+    lineStart = 0U;
+
+    for (index = 0U; index < textBufferSize; index++)
+    {
+        if (textBuffer[index] == '\n')
+        {
+            lineEnd = index;
+
+            if (lineEnd > lineStart && textBuffer[lineEnd - 1U] == '\r')
+            {
+                lineEnd--;
+            }
+
+            textBuffer[index] = 0;
+
+            if (lineEnd < index)
+            {
+                textBuffer[lineEnd] = 0;
+            }
+
+            line = textBuffer + lineStart;
+            lineLength = (size_t)(lineEnd - lineStart);
+            ApplyJackShopConfigLine(config, line, lineLength);
+            lineStart = index + 1U;
+        }
+    }
+
+    if (lineStart < textBufferSize)
+    {
+        lineEnd = textBufferSize;
+
+        if (lineEnd > lineStart && textBuffer[lineEnd - 1U] == '\r')
+        {
+            lineEnd--;
+            textBuffer[lineEnd] = 0;
+        }
+
+        line = textBuffer + lineStart;
+        lineLength = (size_t)(lineEnd - lineStart);
+        ApplyJackShopConfigLine(config, line, lineLength);
+    }
+}
+
+static int LoadJackShopTestConfig(JackShopTestConfig* config, char* configPath, size_t configPathSize)
+{
+    FileBytes fileBytes;
+
+    if (config == NULL)
+    {
+        return 0;
+    }
+
+    InitializeDefaultJackShopTestConfig(config);
+    memset(&fileBytes, 0, sizeof(fileBytes));
+
+    if (configPath != NULL && configPathSize != 0U)
+    {
+        configPath[0] = 0;
+    }
+
+    if (!GetJackShopTestConfigLoadPath(configPath, configPathSize))
+    {
+        LogMessage("Could not resolve Jack shop test config path, using defaults.");
+        return 1;
+    }
+
+    EnsureDefaultJackShopTestConfigFile(configPath);
+
+    if (!FileExists(configPath))
+    {
+        return 1;
+    }
+
+    if (!ReadWholeFile(configPath, &fileBytes))
+    {
+        LogMessage("Could not read Jack shop test config, using defaults: %s", configPath);
+        return 1;
+    }
+
+    ParseJackShopConfigBuffer(config, (char*)fileBytes.Data, fileBytes.Size);
+    FreeFileBytes(&fileBytes);
+    return 1;
+}
+
+static int IsJackShopName(const char* value)
+{
+    if (value == NULL || value[0] == 0)
+    {
+        return 0;
+    }
+
+    if (_stricmp(value, "JackShop") == 0 || _stricmp(value, "jackshop") == 0 || _stricmp(value, "jack_shop") == 0)
+    {
+        return 1;
+    }
+
+    if (strstr(value, "JackShop") != NULL || strstr(value, "jackshop") != NULL || strstr(value, "jack_shop") != NULL)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+static int IsJackShopRefreshHotkeyPressedEdge(void)
+{
+    uint8_t chordDown;
+    int pressed;
+
+    chordDown = (uint8_t)((IsKeyDown(JACK_SHOP_REFRESH_HOTKEY) || IsKeyDown(JACK_SHOP_REFRESH_ALT_HOTKEY)) && IsControlDown() && !IsShiftDown());
+    pressed = chordDown != 0U && g_lastJackShopRefreshChordDown == 0U;
+    g_lastJackShopRefreshChordDown = chordDown;
+    return pressed;
+}
+
+static int IsJackShopGuaranteeHotkeyPressedEdge(void)
+{
+    uint8_t chordDown;
+    int pressed;
+
+    chordDown = (uint8_t)((IsKeyDown(JACK_SHOP_GUARANTEE_HOTKEY) || IsKeyDown(JACK_SHOP_GUARANTEE_ALT_HOTKEY)) && IsControlDown() && IsShiftDown());
+    pressed = chordDown != 0U && g_lastJackShopGuaranteeChordDown == 0U;
+    g_lastJackShopGuaranteeChordDown = chordDown;
+    return pressed;
+}
+
+static uint32_t GetShopItemCount(void* shop, uint8_t** itemBegin)
+{
+    uint8_t* vectorBytes;
+    uint8_t* begin;
+    uint8_t* end;
+    ptrdiff_t byteCount;
+
+    if (itemBegin != NULL)
+    {
+        *itemBegin = NULL;
+    }
+
+    if (shop == NULL)
+    {
+        return 0U;
+    }
+
+    vectorBytes = (uint8_t*)shop + SHOP_ITEMS_VECTOR_OFFSET;
+    begin = *(uint8_t**)vectorBytes;
+    end = *(uint8_t**)(vectorBytes + sizeof(void*));
+
+    if (begin == NULL || end == NULL || end < begin)
+    {
+        return 0U;
+    }
+
+    byteCount = end - begin;
+
+    if (byteCount <= 0 || (byteCount % (ptrdiff_t)SHOP_ITEM_STRIDE_BYTES) != 0)
+    {
+        return 0U;
+    }
+
+    if (itemBegin != NULL)
+    {
+        *itemBegin = begin;
+    }
+
+    return (uint32_t)(byteCount / (ptrdiff_t)SHOP_ITEM_STRIDE_BYTES);
+}
+
+static void* GetShopItemByConfigSlot(void* shop, const JackShopTestConfig* config, uint32_t* itemCount)
+{
+    uint8_t* begin;
+    uint32_t count;
+    uint32_t slotIndex;
+
+    if (itemCount != NULL)
+    {
+        *itemCount = 0U;
+    }
+
+    if (shop == NULL || config == NULL)
+    {
+        return NULL;
+    }
+
+    begin = NULL;
+    count = GetShopItemCount(shop, &begin);
+
+    if (itemCount != NULL)
+    {
+        *itemCount = count;
+    }
+
+    if (begin == NULL || count == 0U)
+    {
+        return NULL;
+    }
+
+    slotIndex = (uint32_t)config->SlotIndex;
+
+    if (slotIndex >= count)
+    {
+        slotIndex = count - 1U;
+    }
+
+    return begin + ((size_t)slotIndex * SHOP_ITEM_STRIDE_BYTES);
+}
+
+static int CalculateJackShopFurniturePrice(const char* furnitureName, int rare, int* price)
+{
+    MsvcString nameString;
+    void* furnitureEffects;
+    int calculatedPrice;
+
+    if (furnitureName == NULL || furnitureName[0] == 0 || price == NULL)
+    {
+        return 0;
+    }
+
+    if (g_furniturePriceLookup == NULL || g_furnitureEffectsGlobal == NULL)
+    {
+        return 0;
+    }
+
+    furnitureEffects = *g_furnitureEffectsGlobal;
+
+    if (furnitureEffects == NULL)
+    {
+        return 0;
+    }
+
+    memset(&nameString, 0, sizeof(nameString));
+
+    if (!InitializeMsvcStringForDebugText(&nameString, furnitureName, strlen(furnitureName)))
+    {
+        return 0;
+    }
+
+    calculatedPrice = g_furniturePriceLookup(furnitureEffects, &nameString, rare ? 1U : 0U);
+    DestroyMsvcStringIfNeeded(&nameString);
+    *price = calculatedPrice;
+    return 1;
+}
+
+static int SetShopItemFurnitureName(void* shopItem, const char* furnitureName)
+{
+    MsvcString* itemName;
+
+    if (shopItem == NULL || furnitureName == NULL || furnitureName[0] == 0)
+    {
+        return 0;
+    }
+
+    itemName = (MsvcString*)((uint8_t*)shopItem + SHOP_ITEM_NAME_OFFSET);
+    DestroyMsvcStringIfNeeded(itemName);
+
+    if (!InitializeMsvcStringForDebugText(itemName, furnitureName, strlen(furnitureName)))
+    {
+        memset(itemName, 0, sizeof(MsvcString));
+        itemName->Capacity = 15U;
+        return 0;
+    }
+
+    return 1;
+}
+
+static int ReplaceShopItemWithFurnitureName(void* shop, void* shopItem, const char* furnitureName, int rare, int* outputPrice)
+{
+    int price;
+
+    if (shop == NULL || shopItem == NULL || furnitureName == NULL || furnitureName[0] == 0)
+    {
+        return 0;
+    }
+
+    price = 0;
+
+    if (!CalculateJackShopFurniturePrice(furnitureName, rare, &price))
+    {
+        LogMessage("Could not calculate furniture price for Jack shop item: %s", furnitureName);
+        return 0;
+    }
+
+    if (!SetShopItemFurnitureName(shopItem, furnitureName))
+    {
+        LogMessage("Could not set Jack shop furniture name: %s", furnitureName);
+        return 0;
+    }
+
+    *(int*)((uint8_t*)shopItem + SHOP_ITEM_TYPE_OFFSET) = SHOP_ITEM_TYPE_FURNITURE;
+    *(int*)((uint8_t*)shopItem + SHOP_ITEM_PRICE_OFFSET) = price;
+    *(int*)((uint8_t*)shopItem + SHOP_ITEM_RARE_OFFSET) = rare ? 1 : 0;
+
+    if (g_shopRefreshShopItem != NULL)
+    {
+        g_shopRefreshShopItem(shop, shopItem, 1U);
+    }
+
+    if (outputPrice != NULL)
+    {
+        *outputPrice = price;
+    }
+
+    return 1;
+}
+
+static int ReplaceShopItemWithFurniture(void* shop, void* shopItem, const JackShopTestConfig* config, int* outputPrice)
+{
+    if (config == NULL)
+    {
+        return 0;
+    }
+
+    return ReplaceShopItemWithFurnitureName(shop, shopItem, config->FurnitureName, config->Rare, outputPrice);
+}
+
+static uint32_t NextJackShopRandomU32(void)
+{
+    uint32_t state;
+
+    state = g_jackShopRandomState;
+
+    if (state == 0U)
+    {
+        state = (uint32_t)GetTickCount64();
+        state ^= (uint32_t)(uintptr_t)&state;
+        state ^= (uint32_t)(uintptr_t)g_lastJackShop;
+
+        if (state == 0U)
+        {
+            state = 0xA341316CU;
+        }
+    }
+
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    g_jackShopRandomState = state;
+    return state;
+}
+
+static int GetFurnitureNameByRowIndex(const ParsedFurnitureFile* file, uint32_t wantedIndex, char* outputName, size_t outputNameSize)
+{
+    uint32_t rowIndex;
+    uint32_t nameLength;
+    const char* name;
+    size_t offset;
+    size_t rowSize;
+
+    if (file == NULL || outputName == NULL || outputNameSize == 0U || wantedIndex >= file->RowCount)
+    {
+        return 0;
+    }
+
+    offset = 8U;
+
+    for (rowIndex = 0U; rowIndex < file->RowCount; rowIndex++)
+    {
+        nameLength = ReadU32Le(file->Data + offset);
+        name = (const char*)(file->Data + offset + FURNITURE_RECORD_METADATA_BYTES);
+        rowSize = (size_t)nameLength + FURNITURE_RECORD_BASE_BYTES;
+
+        if (rowIndex == wantedIndex)
+        {
+            if (nameLength == 0U || nameLength >= outputNameSize)
+            {
+                return 0;
+            }
+
+            memcpy(outputName, name, nameLength);
+            outputName[nameLength] = 0;
+            return 1;
+        }
+
+        offset += rowSize;
+    }
+
+    return 0;
+}
+
+static int PickRandomCurrentFurnitureName(char* outputName, size_t outputNameSize)
+{
+    ParsedFurnitureFile file;
+    uint32_t rowIndex;
+
+    if (outputName == NULL || outputNameSize == 0U)
+    {
+        return 0;
+    }
+
+    outputName[0] = 0;
+
+    if (g_currentFurnitureData == NULL || g_currentFurnitureDataSize == 0U)
+    {
+        LogMessage("Jack shop refresh failed: current furniture_info.data has not been captured yet.");
+        return 0;
+    }
+
+    if (!ParseFurnitureFile(g_currentFurnitureData, g_currentFurnitureDataSize, &file) || file.RowCount == 0U)
+    {
+        LogMessage("Jack shop refresh failed: current furniture_info.data snapshot is invalid.");
+        return 0;
+    }
+
+    rowIndex = NextJackShopRandomU32() % file.RowCount;
+    return GetFurnitureNameByRowIndex(&file, rowIndex, outputName, outputNameSize);
+}
+
+static void RefreshAllJackShopItemButtons(void* shop)
+{
+    uint8_t* begin;
+    uint32_t count;
+    uint32_t index;
+
+    if (shop == NULL || g_shopRefreshShopItem == NULL)
+    {
+        return;
+    }
+
+    begin = NULL;
+    count = GetShopItemCount(shop, &begin);
+
+    if (begin == NULL || count == 0U)
+    {
+        return;
+    }
+
+    for (index = 0U; index < count; index++)
+    {
+        g_shopRefreshShopItem(shop, begin + ((size_t)index * SHOP_ITEM_STRIDE_BYTES), 1U);
+    }
+}
+
+static int TryRefreshJackShop(void* shop)
+{
+    uint8_t* begin;
+    uint32_t count;
+    uint32_t index;
+    uint32_t replacedCount;
+    char furnitureName[MAX_FURNITURE_NAME_BYTES + 1U];
+
+    if (shop == NULL)
+    {
+        return 0;
+    }
+
+    begin = NULL;
+    count = GetShopItemCount(shop, &begin);
+
+    if (begin == NULL || count == 0U)
+    {
+        LogMessage("Jack shop refresh failed: no live shop slots were available. Close and reopen Jack's shop to rebuild the game's stock vector.");
+        return 0;
+    }
+
+    replacedCount = 0U;
+
+    for (index = 0U; index < count; index++)
+    {
+        furnitureName[0] = 0;
+
+        if (!PickRandomCurrentFurnitureName(furnitureName, sizeof(furnitureName)))
+        {
+            continue;
+        }
+
+        if (ReplaceShopItemWithFurnitureName(shop, begin + ((size_t)index * SHOP_ITEM_STRIDE_BYTES), furnitureName, 0, NULL))
+        {
+            replacedCount++;
+        }
+    }
+
+    RefreshAllJackShopItemButtons(shop);
+    LogMessage("Rerolled Jack shop stock in-place: slots=%u replaced=%u", count, replacedCount);
+
+    if (replacedCount != 0U)
+    {
+        FurnitureDebugMessageContext context;
+
+        memset(&context, 0, sizeof(context));
+        context.ItemCount = count;
+        context.ReplacedCount = replacedCount;
+        QueueFurnitureDebugMessageEx(FURNITURE_DEBUG_MESSAGE_JACK_SHOP_REFRESHED, &context);
+    }
+
+    return replacedCount != 0U;
+}
+
+static void TryGuaranteeJackShopFurniture(void* shop)
+{
+    JackShopTestConfig config;
+    char configPath[MAX_PATH_BUFFER];
+    void* shopItem;
+    uint32_t itemCount;
+    int price;
+
+    if (shop == NULL)
+    {
+        return;
+    }
+
+    memset(&config, 0, sizeof(config));
+    configPath[0] = 0;
+    price = 0;
+
+    if (!LoadJackShopTestConfig(&config, configPath, sizeof(configPath)))
+    {
+        LogMessage("Jack shop test failed: could not load config.");
+        return;
+    }
+
+    if (config.FurnitureName[0] == 0)
+    {
+        LogMessage("Jack shop test failed: config furniture name is empty. Config: %s", configPath);
+        return;
+    }
+
+    if (config.RefreshBeforeReplace)
+    {
+        if (!TryRefreshJackShop(shop))
+        {
+            LogMessage("Jack shop test warning: refresh-before-replace did not complete, attempting slot replacement against current stock.");
+        }
+    }
+
+    itemCount = 0U;
+    shopItem = GetShopItemByConfigSlot(shop, &config, &itemCount);
+
+    if (shopItem == NULL)
+    {
+        LogMessage("Jack shop test failed: no live shop item slot was available.");
+        return;
+    }
+
+    if (!ReplaceShopItemWithFurniture(shop, shopItem, &config, &price))
+    {
+        LogMessage("Jack shop test failed while replacing slot %d with %s.", config.SlotIndex, config.FurnitureName);
+        return;
+    }
+
+    LogMessage("Jack shop test item installed: slot=%d count=%u furniture=%s rare=%d price=%d", config.SlotIndex, itemCount, config.FurnitureName, config.Rare, price);
+
+    {
+        FurnitureDebugMessageContext context;
+
+        memset(&context, 0, sizeof(context));
+        context.FurnitureName = config.FurnitureName;
+        context.SlotIndex = config.SlotIndex;
+        context.ItemCount = itemCount;
+        context.Price = price;
+        context.Rare = config.Rare;
+        QueueFurnitureDebugMessageEx(FURNITURE_DEBUG_MESSAGE_JACK_SHOP_INJECTED, &context);
     }
 }
 
@@ -3323,8 +4220,11 @@ static void HideFurnitureDebugOverlayOnDetach(void)
 
     g_lastDebugConsole = NULL;
     g_lastFurnitureEditor = NULL;
+    g_lastJackShop = NULL;
     g_lastFurnitureEditorUpdateTick = 0ULL;
     g_lastDebugToggleChordDown = 0U;
+    g_lastJackShopRefreshChordDown = 0U;
+    g_lastJackShopGuaranteeChordDown = 0U;
 }
 
 static int InitializeMsvcStringForDebugText(MsvcString* value, const char* text, size_t length)
@@ -3611,6 +4511,33 @@ static void ShowFurnitureEditorDebugText(void)
     }
 }
 
+static void ShowFurnitureRuntimeDebugLogTextOnly(void)
+{
+    const char* headerText;
+    size_t headerLength;
+
+    MaybeReloadFurnitureDebugTextFile();
+
+    if (!HasRuntimeDebugMessages())
+    {
+        return;
+    }
+
+    AddFurnitureDebugTextLiteral("");
+
+    if (!g_furnitureDebugTextState.HideLogsHeader)
+    {
+        headerText = GetConfiguredFurnitureDebugTextValue(g_furnitureDebugTextState.LogsHeader, g_furnitureDebugTextState.LogsHeaderLength, GetDefaultFurnitureDebugValueForKey("logs_header"), &headerLength);
+
+        if (headerLength != 0U)
+        {
+            AddFurnitureDebugTextLine(headerText, headerLength);
+        }
+    }
+
+    AddRuntimeFurnitureDebugMessages();
+}
+
 static void AddCandidateFile(PathSet* paths, const char* baseDirectory, const char* relativePath)
 {
     char candidate[MAX_PATH_BUFFER];
@@ -3861,7 +4788,12 @@ static void PatchFurnitureResource(PackedFileData* resource)
             resource->Data = mergedData;
             resource->Size = mergedSize;
             resource->OwnsData = 0U;
+            StoreCurrentFurnitureDataSnapshot(resource->Data, resource->Size);
             LogMessage("Patched loaded furniture_info.data in memory! Rows=%u Size=%u", mergedRows, mergedSize);
+        }
+        else
+        {
+            StoreCurrentFurnitureDataSnapshot(resource->Data, resource->Size);
         }
 
         InterlockedExchange(&g_patchFinished, 1);
@@ -3872,6 +4804,65 @@ static void PatchFurnitureResource(PackedFileData* resource)
     }
 
     InterlockedExchange(&g_patchStarted, 0);
+}
+
+
+static void __fastcall HookShopInit(void* shop, MsvcString* shopName, void* shopItems, uint8_t houseShop)
+{
+    char shopNameBuffer[MAX_PATH_BUFFER];
+    int isJackShop;
+
+    shopNameBuffer[0] = 0;
+    isJackShop = 0;
+
+    if (CopyMsvcString(shopNameBuffer, sizeof(shopNameBuffer), shopName))
+    {
+        isJackShop = IsJackShopName(shopNameBuffer);
+    }
+
+    if (g_originalShopInit != NULL)
+    {
+        g_originalShopInit(shop, shopName, shopItems, houseShop);
+    }
+
+    if (isJackShop)
+    {
+        g_lastJackShop = shop;
+        LogMessage("Remembered Jack shop instance for test hotkeys: %s", shopNameBuffer);
+    }
+}
+
+static void __fastcall HookShopUpdate(void* shop)
+{
+    if (g_originalShopUpdate != NULL)
+    {
+        g_originalShopUpdate(shop);
+    }
+
+    if (shop == NULL || shop != g_lastJackShop)
+    {
+        return;
+    }
+
+    if (IsJackShopGuaranteeHotkeyPressedEdge())
+    {
+        TryGuaranteeJackShopFurniture(shop);
+    }
+
+    if (IsJackShopRefreshHotkeyPressedEdge())
+    {
+        TryRefreshJackShop(shop);
+    }
+
+    if (HasRuntimeDebugMessages())
+    {
+        if (g_lastDebugConsole != NULL)
+        {
+            SetDebugOverlayVisibleOnConsole(g_lastDebugConsole, 1);
+        }
+
+        ShowFurnitureRuntimeDebugLogTextOnly();
+    }
 }
 
 static PackedFileData* __fastcall HookPackedFileLoad(void* context, MsvcString* path, uint8_t useCache, uint8_t allowFallback)
@@ -3966,6 +4957,10 @@ static void Initialize(void)
         g_furniturePayloadLookup = (fn_furniture_payload_lookup)(g_gameBase + RVA_FURNITURE_PAYLOAD_LOOKUP);
         g_gameAllocate = (fn_game_allocate)(g_gameBase + RVA_GAME_ALLOCATE);
         g_msvcStringDestruct = (fn_msvc_string_destruct)(g_gameBase + RVA_MSVC_STRING_DESTRUCT);
+        g_shopInitShop = (fn_shop_init_shop)(g_gameBase + RVA_SHOP_INIT_SHOP);
+        g_shopRefreshShopItem = (fn_shop_refresh_shop_item)(g_gameBase + RVA_SHOP_REFRESH_SHOP_ITEM);
+        g_furniturePriceLookup = (fn_furniture_price_lookup)(g_gameBase + RVA_FURNITURE_PRICE_LOOKUP);
+        g_furnitureEffectsGlobal = (void**)(g_gameBase + RVA_GLOBAL_FURNITURE_EFFECTS_PTR);
     }
 
     installedHookCount = 0;
@@ -3993,6 +4988,32 @@ static void Initialize(void)
     else
     {
         LogMessage("Failed to install furniture editor hotkey hook at RVA 0x%08X!", RVA_FURNITURE_EDITOR_UPDATE);
+    }
+
+    trampoline = NULL;
+
+    if (g_mj.InstallHook(RVA_SHOP_INIT, SHOP_INIT_STOLEN_BYTES, (void*)HookShopInit, &trampoline, 5, MOD_NAME))
+    {
+        g_originalShopInit = (fn_shop_init)trampoline;
+        installedHookCount++;
+        LogMessage("Installed Jack shop init hook at RVA 0x%08X!", RVA_SHOP_INIT);
+    }
+    else
+    {
+        LogMessage("Failed to install Jack shop init hook at RVA 0x%08X!", RVA_SHOP_INIT);
+    }
+
+    trampoline = NULL;
+
+    if (g_mj.InstallHook(RVA_SHOP_UPDATE, SHOP_UPDATE_STOLEN_BYTES, (void*)HookShopUpdate, &trampoline, 5, MOD_NAME))
+    {
+        g_originalShopUpdate = (fn_shop_update)trampoline;
+        installedHookCount++;
+        LogMessage("Installed Jack shop hotkey hook at RVA 0x%08X!", RVA_SHOP_UPDATE);
+    }
+    else
+    {
+        LogMessage("Failed to install Jack shop hotkey hook at RVA 0x%08X!", RVA_SHOP_UPDATE);
     }
 
     trampoline = NULL;
