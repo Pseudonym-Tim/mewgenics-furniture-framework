@@ -1,5 +1,5 @@
 # MewFurnitureFramework
-<img width="800" height="500" alt="MewFurnitureFramework" src="https://github.com/user-attachments/assets/21b947fc-038e-40fb-b3c6-8a21f18b49ca" />
+<img width="800" height="500" alt="mewfurnframework" src="https://github.com/user-attachments/assets/aab54df6-3350-4258-ae73-f7da520a3fbf" />
 
 
 A DLL mod for Mewgenics that acts as a framework for the creation and loading of new custom furniture mods!
