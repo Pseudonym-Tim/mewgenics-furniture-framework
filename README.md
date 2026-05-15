@@ -135,7 +135,7 @@ To use the in-game furniture editor, please follow these steps:
 1. Install and open Mewtator.
 2. Go to Mewtator's settings.
 3. Enable the dev mode and enable the debug console
-4. Make sure your furniture mod is already set up and installed.
+4. Make sure your furniture mod is already set up and installed, and make sure the mod is enabled along with the framework.
 5. Launch the game through Mewtator.
 6. Open the game's furniture editor from the dev/debug tools.
 
