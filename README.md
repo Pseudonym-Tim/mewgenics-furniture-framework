@@ -1,9 +1,9 @@
 # MewFurnitureFramework
 <img width="800" height="500" alt="mewfurnframework" src="https://github.com/user-attachments/assets/aab54df6-3350-4258-ae73-f7da520a3fbf" />
 
-
 A DLL mod for Mewgenics that acts as a framework for the creation and loading of new custom furniture mods!
 
+This is designed to work alongside [Mewjector](https://github.com/githubuser508/mewjector) and is a requirement.
 This allows modders to add new furniture data without replacing the game's original `furniture_info.data` file.
 
 Instead of asking every mod to ship a full edited copy of `furniture_info.data`, the framework scans installed framework mods for small additive furniture data files, merges the new rows into the loaded furniture database in memory, and leaves the base game file untouched!
