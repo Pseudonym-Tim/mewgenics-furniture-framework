@@ -46,7 +46,7 @@ Furniture rows are matched by name. If a row name already exists, that row is ig
 
 ## Installation
 
-Use the framework like you do any other mod, using your normal Mewjector/Mewtator setup.
+Install the framework like you do any other mod, using your normal Mewjector/Mewtator setup!
 
 Layout should look like this:
 
