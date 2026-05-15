@@ -156,6 +156,7 @@ Captured furniture data is written to:
 ```text
 MewFurnitureFramework/output/furniture_info.data.append
 ```
+For release, copy/cut that generated append file into your furniture mod's data folder.
 
 Use `Ctrl + F8` when building a multi-furniture mod pack for multiple custom furniture items. Use `Ctrl + Shift + F8` when you just want a clean one-furniture append file for the currently selected furniture item.
 
