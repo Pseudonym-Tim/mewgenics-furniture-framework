@@ -99,12 +99,11 @@ Make sure your furniture mod is installed in the game's `mods` folder so MewFurn
 
 A basic furniture mod setup process looks like this:
 
-1. Create a new mod folder for your furniture mod.
-2. Create a `data` folder inside that mod folder.
-3. Add or copy your `furniture_info.data.append` file (generated with the improved in-game furniture editor) into the `data` folder.
-4. Make sure to include the standalone `MewFurnitureUninstaller.exe` in the root of the furniture mod folder before release. You can find the uninstaller attached to this repository's releases, or in the root folder of the example furniture mod.
-5. Make sure you have both `MewFurnitureFramework` and your furniture mod through your normal Mewjector/Mewtator setup.
-6. Launch the game and confirm that the framework loads your append file.
+1. Create a new mod folder for your furniture mod and set up everything for your desired furniture.
+2. Add or copy your `furniture_info.data.append` file (generated with the improved in-game furniture editor) into the `data` folder.
+3. Make sure to include the standalone `MewFurnitureUninstaller.exe` in the root of the furniture mod folder before release. You can find the uninstaller attached to this repository's releases, or in the root folder of the example furniture mod.
+4. Make sure you have both `MewFurnitureFramework` and your furniture mod through your normal Mewjector/Mewtator setup.
+5. Launch the game and confirm that the framework loads your append file.
 
 When using the in-game furniture editor capture workflow, captured furniture data is first written to:
 
