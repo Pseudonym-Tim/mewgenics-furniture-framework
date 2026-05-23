@@ -1,0 +1,35 @@
+# Lines beginning with @ configure the furniture debug overlay, non-@ lines become instruction text...
+@instructions_header=--- Instructions ---
+@logs_header=--- Logs ---
+@current_piece_text=Current Furniture
+@unsaved_changes_text=**YOU HAVE UNSAVED CHANGES!**
+@hide_current_piece=0
+@hide_unsaved_changes=0
+@hide_instructions_header=0
+@hide_logs_header=0
+@hide_ctrl_s_save_hint=1
+@message_overlay_shown=Debug overlay shown! Press F7 to toggle!
+@message_overlay_hidden=Debug overlay hidden!
+@message_capture_saved=Saved furniture data!\nFurniture: {furniture}\nRows in append file: {rows}\nSaved to:\n{path}
+@message_capture_overwritten=Overwrote furniture append data!\nFurniture: {furniture}\nRows in append file: {rows}\nSaved to:\n{path}
+@message_capture_read_failed=Furniture capture failed!\nCould not read the current furniture editor row. Make sure the furniture editor is open and a furniture entry is selected
+@message_capture_path_failed=Furniture capture failed!\nCould not resolve or create the output folder
+@message_capture_write_failed=Furniture capture failed!\nCould not write the append file.\nAttempted path:\n{path}
+@message_vanilla_dump_success=Dumped vanilla furniture names!\nNames: {names}\nSaved to:\n{path}
+@message_vanilla_dump_missing=Vanilla furniture name dump failed!\nThe vanilla furniture_info.data has not been loaded yet
+@message_vanilla_dump_invalid=Vanilla furniture name dump failed!\nThe cached vanilla furniture data is invalid
+@message_vanilla_dump_write_failed=Vanilla furniture name dump failed!\nCould not write vanilla_furniture_names_dump.txt
+
+Left-click: Draw black tiles, (Solid/blocking furniture collision)
+Ctrl + Click: Draw red tiles, (Support tiles, required to overlap with a surface tile)
+Shift + Click: Draw blue tiles, (Surface tiles, can place stuff on top of)
+P + Click: Draw brown tiles, (Poop-specific placement/logic tiles)
+Tab + Click: Draw yellow tiles: (Extra clickable/hitbox areas)
+Right-click: Erase a tile
+Left/Right Arrow Keys: Cycle through furniture
+Shift + Arrow: Jump to next furniture that hasn't been set up yet
+Ctrl + Z: Undo any previous changes
+Ctrl + S: Save to packed data/furniture_info.data (Deprecated)
+Ctrl + F8: Write selected furniture data into an append file
+Ctrl + Shift + F8: Overwrite the append file with only the selected furniture data
+Ctrl + F9: Dump vanilla furniture names
