@@ -78,4 +78,32 @@ copy /Y furniture_editor_debug_text.txt "%DEPLOY_DIR%\furniture_editor_debug_tex
 copy /Y jack_shop_test.txt "%DEPLOY_DIR%\jack_shop_test.txt"
 copy /Y vanilla_furniture_names.txt "%DEPLOY_DIR%\vanilla_furniture_names.txt"
 
+REM Deploy swfs folder...
+if exist "%DEPLOY_DIR%\swfs" (
+    rmdir /S /Q "%DEPLOY_DIR%\swfs"
+)
+
+xcopy /E /I /Y swfs "%DEPLOY_DIR%\swfs"
+
+if %ERRORLEVEL% GEQ 2 (
+    echo.
+    echo ERROR: Failed to copy swfs folder.
+    pause
+    exit /b 1
+)
+
+REM Create empty output folder...
+if exist "%DEPLOY_DIR%\output" (
+    rmdir /S /Q "%DEPLOY_DIR%\output"
+)
+
+mkdir "%DEPLOY_DIR%\output"
+
+if %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo ERROR: Failed to create empty output folder.
+    pause
+    exit /b 1
+)
+
 echo Deployed to %DEPLOY_DIR%
